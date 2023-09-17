@@ -1,8 +1,8 @@
 # Domoticz-Renault-Plugin
 
-A domoticz python plugin for the My Remault API
+A domoticz python plugin for the My Renault API
 
-Very first version exposed to the community
+Second version exposed to the community
 
 Please provide feedback about functionality and bugs
 
@@ -13,4 +13,18 @@ Please provide feedback about functionality and bugs
 - ... your idea here
 
 ## install
-see https://www.domoticz.com/wiki/Using_Python_plugins
+see https://www.domoticz.com/wiki/Using_Python_plugins  
+uses https://github.com/hacf-fr/renault-api as set in requirements.txt 
+
+## history
+
+#### 0.1.4 retries and efficiency
+- exceptions result in 3 retries
+- not using asyncio.gather uses only one TLS session instead of N parallel ones
+- verify errors before processing output of account.get_vehicles()
+- mark TODO items
+- cosmetics
+
+#### 0.1.2 Very first version for public sharing
+- Should be working for most people
+- Please provide feedback

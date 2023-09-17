@@ -8,10 +8,10 @@
 # Heavily inspired by https://github.com/joro75/Domoticz-Toyota-Plugin
 # Many thanks to John de Rooij!
 """
-<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.1.2"
+<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.1.4"
         externallink="https://github.com/HomeACcessoryKid/Domoticz-Renault-Plugin">
     <description>
-        <h2>Domoticz Renault Plugin 0.1.2</h2>
+        <h2>Domoticz Renault Plugin 0.1.4</h2>
         <ul style="list-style-type:none">
             <li>A Domoticz plugin that provides devices for a Renault car with connected services.</li>
             <li>It is using the same API that is used by the MyRenault connected service.</li>
@@ -32,6 +32,7 @@
             <li>Username - The username that is also used to login in the MyRenault application.</li>
             <li>Password - The password that is also used to login in the MyRenault application.</li>
             <li>Car - The License plate or VIN for the car for which the data should be retrieved.</li>
+            <li>Locale - The language and country that apply to your car</li>
         </ul>
         <h4>Domoticz issue</h4>
         <ul style="list-style-type:none">
@@ -44,7 +45,7 @@
         <param field="Username" label="Username" width="200px" required="true"/>
         <param field="Password" label="Password" width="200px" required="true" password="true"/>
         <param field="Mode1" label="Car" width="200px" required="false" />
-        <param field="Mode2" label="Language_Country" width="150px">
+        <param field="Mode2" label="Locale" width="150px">
             <options>
                 <option label="nl_NL" value="nl_NL"  default="true" />
                 <option label="bg_BG" value="bg_BG"/>
@@ -229,48 +230,57 @@ class MyRenaultConnector():
             if self._logged_on:
                 Domoticz.Log('Succesfully logged on')
                 cars=await account.get_vehicles()
-                self._car = self._lookup_car(cars.vehicleLinks, Parameters['Mode1'])
-                if self._car is None:
-                    self._car = self._lookup_car(cars.vehicleLinks, Parameters['Name'])
-                if self._car is None:
-                    self._logged_on = False
-                    Domoticz.Error('Could not find the desired car: choose one from the below list')
-                    for car in cars.vehicleLinks:
-                        Domoticz.Error( 'VIN: ' + car.vehicleDetails.vin + 
-                                       ' LicensePlate: ' + car.vehicleDetails.registrationNumber +
-                                       ' Model: ' + car.vehicleDetails.model.label +
-                                       ' ' + car.vehicleDetails.engineEnergyType)
+                if cars.errors is None and not cars.vehicleLinks is None:
+                    self._car = self._lookup_car(cars.vehicleLinks, Parameters['Mode1'])
+                    if self._car is None:
+                        self._car = self._lookup_car(cars.vehicleLinks, Parameters['Name'])
+                    if self._car is None:
+                        self._logged_on = False
+                        Domoticz.Error('Could not find the desired car: choose one from the below list')
+                        for car in cars.vehicleLinks:
+                            Domoticz.Error( 'VIN: ' + car.vehicleDetails.vin + 
+                                           ' LicensePlate: ' + car.vehicleDetails.registrationNumber +
+                                           ' Model: ' + car.vehicleDetails.model.label +
+                                           ' ' + car.vehicleDetails.engineEnergyType)
+                    else:
+                        Domoticz.Status('Using VIN: ' + self._car.vehicleDetails.vin + 
+                                       ' LicensePlate: ' + self._car.vehicleDetails.registrationNumber +
+                                       ' Model: ' + self._car.vehicleDetails.model.label +
+                                       ' ' + self._car.vehicleDetails.engineEnergyType)
                 else:
-                    Domoticz.Status('Using VIN: ' + self._car.vehicleDetails.vin + 
-                                   ' LicensePlate: ' + self._car.vehicleDetails.registrationNumber +
-                                   ' Model: ' + self._car.vehicleDetails.model.label +
-                                   ' ' + self._car.vehicleDetails.engineEnergyType)
+                    Domoticz.Error('Error in get_vehicles:' + cars)
 
 
     async def _retrieve_status(self) -> Union[Any, None]:
         """Get status from the Renault MyR servers."""
         Domoticz.Debug('_retrieve_status')
         now = datetime.datetime.now()
-        async with aiohttp.ClientSession() as websession:
+        attempt = 3
+        while attempt:
             try:
-                client = RenaultClient(websession=websession, locale=Parameters['Mode2'])
-                await client.session.login(Parameters['Username'], Parameters['Password'])
-                account = await  client.get_api_account(self._accountId)
-                vehicle = await account.get_api_vehicle(self._car.vehicleDetails.vin)
-                vehicle_status = await asyncio.gather(
-                    *[
-                        vehicle.get_cockpit(),        # [0] fuelAutonomy fuelQuantity totalMileage
-                        vehicle.get_charges(now,now), # [1] charges of today
-                        vehicle.get_charge_mode(),    # [2] chargeMode
-                        #vehicle.get_battery_status(), # [3] timestamp batteryLevel batteryAutonomy plugStatus chargingStatus
-                        #vehicle.get_location(),       # [4] gpsLongitude gpsLatitude lastUpdateTime gpsDirection
-                    ]
-                )
-                return vehicle_status
+                async with aiohttp.ClientSession() as websession:
+                    client = RenaultClient(websession=websession, locale=Parameters['Mode2'])
+                    await client.session.login(Parameters['Username'], Parameters['Password'])
+                    account = await  client.get_api_account(self._accountId)
+                    vehicle = await account.get_api_vehicle(self._car.vehicleDetails.vin)
+                    vehicle_status = []
+                    vehicle_status.append(await vehicle.get_cockpit())        #[0] fuelAutonomy fuelQuantity totalMileage
+                    vehicle_status.append(await vehicle.get_charges(now,now)) #[1] charges of today
+                    vehicle_status.append(await vehicle.get_charge_mode())    #[2] chargeMode
+                    #vehicle.get_battery_status() #[3] timestamp batteryLevel batteryAutonomy plugStatus chargingStatus
+                    #vehicle.get_location(),      #[4] timestamp gpsLongitude gpsLatitude lastUpdateTime gpsDirection
+                    return vehicle_status
+            except (aiohttp.client_exceptions.ClientResponseError,
+                    renault_api.kamereon.exceptions.FailedForwardException) as ex:
+                Domoticz.Error(f'Try again? {attempt}: {ex}')
+                attempt -= 1
+                if attempt:
+                    await asyncio.sleep(5)
             except renault_api.exceptions.RenaultException as ex:
                 Domoticz.Error(f'Retrieve Error: {ex}')
-                self._logged_on = False
-                return None
+                attempt = 0
+        self._logged_on = False
+        return None
 
 
     def retrieve_vehicle_status(self) -> Union[Any, None]:
@@ -335,7 +345,7 @@ class RenaultDomoticzDevice(DomoticzDevice):
         """
         return
 
-class MileageRenaultDevice(RenaultDomoticzDevice):
+class MileageRenaultDevice(RenaultDomoticzDevice): # TODO: make option for miles based on relevant locale?
     """The Domoticz device that shows the mileage."""
 
     def __init__(self) -> None:
@@ -442,7 +452,7 @@ class ChargeRenaultDevice(RenaultDomoticzDevice):
                 sValn='-1;0;' + now.strftime('%Y-%m-%d') + ' 00:00:00'
                 Devices[self._unit_index].Update(nValue=0,sValue=sValn)  # register a zero point at 00:00
                 for charge in rd['charges']:
-                    energy=round(charge['chargeEnergyRecovered']*1000)
+                    energy=round(charge['chargeEnergyRecovered']*1000) # TODO: do something about negative reported values
                     day_date=charge['chargeStartDate'][0:10]
                     day_time=charge['chargeStartDate'][11:19] # TODO: take TZ and DST into account
                     if day_date == old_day_date:
@@ -533,4 +543,3 @@ def dump_config_to_log() -> None:
         Domoticz.Debug(f'Device nValue:    {str(Devices[key].nValue)}')
         Domoticz.Debug(f'Device sValue:   \'{Devices[key].sValue}\'')
         Domoticz.Debug(f'Device LastLevel: {str(Devices[key].LastLevel)}')
-
