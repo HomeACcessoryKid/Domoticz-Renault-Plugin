@@ -18,6 +18,10 @@ uses https://github.com/hacf-fr/renault-api as set in requirements.txt
 
 ## history
 
+#### 0.1.5 single car mode and timezone aware
+- when only one car is available, it is chosen automatically
+- process charges taking timezone into account
+
 #### 0.1.4 retries and efficiency
 - exceptions result in 3 retries
 - not using asyncio.gather uses only one TLS session instead of N parallel ones

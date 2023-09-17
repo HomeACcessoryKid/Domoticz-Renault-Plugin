@@ -8,10 +8,10 @@
 # Heavily inspired by https://github.com/joro75/Domoticz-Toyota-Plugin
 # Many thanks to John de Rooij!
 """
-<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.1.4"
+<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.1.5"
         externallink="https://github.com/HomeACcessoryKid/Domoticz-Renault-Plugin">
     <description>
-        <h2>Domoticz Renault Plugin 0.1.4</h2>
+        <h2>Domoticz Renault Plugin 0.1.5</h2>
         <ul style="list-style-type:none">
             <li>A Domoticz plugin that provides devices for a Renault car with connected services.</li>
             <li>It is using the same API that is used by the MyRenault connected service.</li>
@@ -29,10 +29,10 @@
         </ul>
         <h3>Configuration</h3>
         <ul style="list-style-type:square">
-            <li>Username - The username that is also used to login in the MyRenault application.</li>
-            <li>Password - The password that is also used to login in the MyRenault application.</li>
-            <li>Car - The License plate or VIN for the car for which the data should be retrieved.</li>
-            <li>Locale - The language and country that apply to your car</li>
+            <li>Username - The username that is also used to login in the MyRenault app.</li>
+            <li>Password - The password that is also used to login in the MyRenault app.</li>
+            <li>Car -      The License plate or VIN if more than one car is available.</li>
+            <li>Locale -   The language and country that apply to your car</li>
         </ul>
         <h4>Domoticz issue</h4>
         <ul style="list-style-type:none">
@@ -99,6 +99,7 @@ from abc import ABC, abstractmethod
 import asyncio
 import aiohttp
 import datetime
+from zoneinfo import ZoneInfo
 from typing import Any, Union, List, Tuple, Optional, Dict
 import arrow
 
@@ -231,9 +232,12 @@ class MyRenaultConnector():
                 Domoticz.Log('Succesfully logged on')
                 cars=await account.get_vehicles()
                 if cars.errors is None and not cars.vehicleLinks is None:
-                    self._car = self._lookup_car(cars.vehicleLinks, Parameters['Mode1'])
-                    if self._car is None:
-                        self._car = self._lookup_car(cars.vehicleLinks, Parameters['Name'])
+                    if len(cars.vehicleLinks) == 1:
+                        self._car = cars.vehicleLinks[0]
+                    else:
+                        self._car = self._lookup_car(cars.vehicleLinks, Parameters['Mode1'])
+                        if self._car is None:
+                            self._car = self._lookup_car(cars.vehicleLinks, Parameters['Name'])
                     if self._car is None:
                         self._logged_on = False
                         Domoticz.Error('Could not find the desired car: choose one from the below list')
@@ -398,7 +402,7 @@ class FuelRenaultDevice(RenaultDomoticzDevice):
                 Domoticz.Device(Name='Fuel level', Unit=self._unit_index,
                                 TypeName='Percentage',
                                 Used=1,
-                                Image=10, # LogFire (represents fossile fuel)
+                                Image=10, # LogFire (represents Fossil Fuel)
                                 Description='The filled percentage of the fuel tank'
                                 ).Create()
 
@@ -446,23 +450,28 @@ class ChargeRenaultDevice(RenaultDomoticzDevice):
         """Determine the actual value of the instrument and update the device in Domoticz."""
         if vehicle_status:
             if self.exists():
-                old_day_date=''
+                old_csd_date=''
                 rd=vehicle_status[1].raw_data
                 now = datetime.datetime.now()
                 sValn='-1;0;' + now.strftime('%Y-%m-%d') + ' 00:00:00'
                 Devices[self._unit_index].Update(nValue=0,sValue=sValn)  # register a zero point at 00:00
                 for charge in rd['charges']:
-                    energy=round(charge['chargeEnergyRecovered']*1000) # TODO: do something about negative reported values
-                    day_date=charge['chargeStartDate'][0:10]
-                    day_time=charge['chargeStartDate'][11:19] # TODO: take TZ and DST into account
-                    if day_date == old_day_date:
+                    energy=round(charge['chargeEnergyRecovered']*1000)
+                    if energy<0: #Renault API is able to report a negative number !!!
+                        energy=1 #signal that something bad happened but not significant to disturb
+                    ncsd=datetime.datetime.strptime(charge['chargeStartDate'],'%Y-%m-%dT%H:%M:%SZ') #2023-09-17T00:00:49Z
+                    ucsd=ncsd.replace(tzinfo=ZoneInfo('UTC'))   #convert naive time to UTC aware
+                    lcsd=ucsd.astimezone(ZoneInfo('localtime')) #present in the local timezone
+                    csd_time=lcsd.strftime('%Y-%m-%d %H:%M:%S')
+                    csd_date=lcsd.strftime('%Y-%m-%d')
+                    if csd_date == old_csd_date:
                         daytotal+=energy
                     else:
                         daytotal=energy
-                    old_day_date = day_date
-                    sValh='-1;' + str(energy)   + ';' + day_date + ' ' + day_time
-                    sVald='-1;' + str(daytotal) + ';' + day_date
-                    Devices[self._unit_index].Update(nValue=0,sValue=sValh)
+                    old_csd_date = csd_date
+                    sValt='-1;' + str(energy)   + ';' + csd_time
+                    sVald='-1;' + str(daytotal) + ';' + csd_date
+                    Devices[self._unit_index].Update(nValue=0,sValue=sValt)
                     Devices[self._unit_index].Update(nValue=0,sValue=sVald)
                 self.did_update()
 
