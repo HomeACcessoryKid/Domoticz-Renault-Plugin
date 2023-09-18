@@ -18,6 +18,12 @@ uses https://github.com/hacf-fr/renault-api as set in requirements.txt
 
 ## history
 
+#### 0.1.6 Status-device + Switch-device foundations
+- Status shows plugState, chargeStatus and scheduled or always charging
+- Switch will toggle between scheduled and always charging
+- Switch mechanism is early stages, commands have been tested
+- renamed all mileage to distance
+
 #### 0.1.5 single car mode and timezone aware
 - when only one car is available, it is chosen automatically
 - process charges taking timezone into account

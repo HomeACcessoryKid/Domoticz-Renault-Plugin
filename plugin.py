@@ -8,10 +8,10 @@
 # Heavily inspired by https://github.com/joro75/Domoticz-Toyota-Plugin
 # Many thanks to John de Rooij!
 """
-<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.1.5"
+<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.1.6"
         externallink="https://github.com/HomeACcessoryKid/Domoticz-Renault-Plugin">
     <description>
-        <h2>Domoticz Renault Plugin 0.1.5</h2>
+        <h2>Domoticz Renault Plugin 0.1.6</h2>
         <ul style="list-style-type:none">
             <li>A Domoticz plugin that provides devices for a Renault car with connected services.</li>
             <li>It is using the same API that is used by the MyRenault connected service.</li>
@@ -23,9 +23,11 @@
         </ul>
         <h3>Devices</h3>
         <ul style="list-style-type:square">
-            <li>Mileage - Shows the daily and total mileage of the car</li>
+            <li>Distance - Shows the daily and total distance of the car</li>
             <li>Fuel level - Shows the current fuel level percentage</li>
             <li>Charge - Shows the charges made and the energy increase</li>
+            <li>ChargingStatus - Shows plugState, chargingStatus and if Scheduled or Always charging</li>
+            <li>ChargeIt - Toggle between Scheduled and Always charging</li>
         </ul>
         <h3>Configuration</h3>
         <ul style="list-style-type:square">
@@ -163,9 +165,11 @@ except (ModuleNotFoundError, ImportError):
 #     _importErrors += ['The python geopy library is not installed.']
 
 
-UNIT_MILEAGE_INDEX: int = 1
+UNIT_DISTANCE_INDEX:int = 1
 UNIT_FUEL_INDEX:    int = 2
 UNIT_CHARGE_INDEX:  int = 3
+UNIT_SWITCH_INDEX:  int = 4
+UNIT_STATUS_INDEX:  int = 5
 
 class ReducedHeartBeat(ABC):
     """Helper class that only calls the update of the devices just before the hour or midnight"""
@@ -271,8 +275,19 @@ class MyRenaultConnector():
                     vehicle_status.append(await vehicle.get_cockpit())        #[0] fuelAutonomy fuelQuantity totalMileage
                     vehicle_status.append(await vehicle.get_charges(now,now)) #[1] charges of today
                     vehicle_status.append(await vehicle.get_charge_mode())    #[2] chargeMode
-                    #vehicle.get_battery_status() #[3] timestamp batteryLevel batteryAutonomy plugStatus chargingStatus
-                    #vehicle.get_location(),      #[4] timestamp gpsLongitude gpsLatitude lastUpdateTime gpsDirection
+                    vehicle_status.append(await vehicle.get_battery_status()) #[3] timestamp batteryLevel batteryAutonomy plugStatus chargingStatus
+                    vehicle_status.append(await vehicle.get_location())       #[4] timestamp gpsLongitude gpsLatitude lastUpdateTime gpsDirection
+#                     vehicle_status.append(await vehicle.get_details())
+#                     vehicle_status.append(await vehicle.get_charging_settings())
+#                     vehicle_status.append(await vehicle.get_hvac_settings())
+                    #vehicle_status.append(await vehicle.get_lock_status())                  #broken
+                    #vehicle_status.append(await vehicle.get_notification_settings())        #broken
+                    #vehicle_status.append(await vehicle.get_res_state())                    #broken
+                    #vehicle_status.append(await vehicle.get_hvac_sessions(now,now))         #broken
+                    #await vehicle.set_charge_stop()                                         #weird behavior
+#                     await vehicle.set_charge_start()                                        #same as charge_mode always
+#                     vehicle_status.append(await vehicle.set_charge_mode("schedule_mode"  )) #works
+#                     vehicle_status.append(await vehicle.set_charge_mode("always_charging")) #works
                     return vehicle_status
             except (aiohttp.client_exceptions.ClientResponseError,
                     renault_api.kamereon.exceptions.FailedForwardException) as ex:
@@ -301,6 +316,10 @@ class MyRenaultConnector():
             Domoticz.Log(vehicle_status)
         return vehicle_status
 
+
+    def onCommand(self, Unit, Command, Level, Color) -> None:
+        """Process the command"""
+        Domoticz.Error("onCommand called for Unit " + str(Unit) + ": Parameter '" + str(Command))
 
     def disconnect(self) -> None:
         """Disconnect from the MyRenault servers."""
@@ -349,12 +368,12 @@ class RenaultDomoticzDevice(DomoticzDevice):
         """
         return
 
-class MileageRenaultDevice(RenaultDomoticzDevice): # TODO: make option for miles based on relevant locale?
-    """The Domoticz device that shows the mileage."""
+class DistanceRenaultDevice(RenaultDomoticzDevice): # TODO: make option for miles based on relevant locale?
+    """The Domoticz device that shows the distance."""
 
     def __init__(self) -> None:
-        super().__init__(UNIT_MILEAGE_INDEX)
-        self._last_mileage: int = 0
+        super().__init__(UNIT_DISTANCE_INDEX)
+        self._last_distance: int = 0
 
     def create(self, vehicle_status) -> None:
         """Check if the device is present in Domoticz, and otherwise create it."""
@@ -369,22 +388,22 @@ class MileageRenaultDevice(RenaultDomoticzDevice): # TODO: make option for miles
                                         }
                                 ).Create()
 
-        # Retrieve the last mileage that is already known in Domoticz
+        # Retrieve the last distance that is already known in Domoticz
         if self.exists():
             try:
-                self._last_mileage = int(Devices[self._unit_index].sValue)
+                self._last_distance = int(Devices[self._unit_index].sValue)
             except ValueError:
-                self._last_mileage = 0
+                self._last_distance = 0
 
     def update(self, vehicle_status) -> None:
         """Determine the actual value of the instrument and update the device in Domoticz."""
         if vehicle_status:
             if self.exists():
-                mileage = vehicle_status[0].totalMileage
-                diff = mileage - self._last_mileage
-                if diff >= 0 or self.requires_update(): # Mileage can only go up
-                    Devices[self._unit_index].Update(nValue=0, sValue=f'{mileage}')
-                    self._last_mileage = mileage
+                distance = vehicle_status[0].totalMileage
+                diff = distance - self._last_distance
+                if diff >= 0 or self.requires_update(): # Distance can only go up
+                    Devices[self._unit_index].Update(nValue=0, sValue=f'{distance}')
+                    self._last_distance = distance
                     self.did_update()
 
 
@@ -476,6 +495,79 @@ class ChargeRenaultDevice(RenaultDomoticzDevice):
                 self.did_update()
 
 
+class ChargeRenaultSwitch(RenaultDomoticzDevice):
+    """The Domoticz device that enables charges"""
+
+    def __init__(self) -> None:
+        super().__init__(UNIT_SWITCH_INDEX)
+        self._last_mode: bool = False
+
+    def create(self, vehicle_status) -> None:
+        """Check if the device is present in Domoticz, and otherwise create it."""
+        if vehicle_status:
+            if not self.exists():
+                Domoticz.Device(Name='ChargeIt', Unit=self._unit_index,
+                                Type=244, Subtype=73, Switchtype=0, # Switch on/off
+                                Description="Toggle between Scheduled and Always charging",
+                                Used=1
+                                ).Create()
+        if self.exists():
+            try:
+                self._last_mode =  bool(Devices[self._unit_index].sValue)
+            except ValueError:
+                self._last_mode = False
+
+    def update(self, vehicle_status) -> None:
+        """Determine the actual value of the instrument and update the device in Domoticz."""
+
+
+class ChargeRenaultStatus(RenaultDomoticzDevice):
+    """The Domoticz device that shows three charging statuses"""
+
+    def __init__(self) -> None:
+        super().__init__(UNIT_STATUS_INDEX)
+        self._last_mode: bool = False
+
+    def create(self, vehicle_status) -> None:
+        """Check if the device is present in Domoticz, and otherwise create it."""
+        if vehicle_status:
+            if not self.exists():
+                Domoticz.Device(Name='chargingStatus', Unit=self._unit_index,
+                                Type=243, Subtype=19,  # Text Sensor
+                                Image=12, # Media player, looks like status Leds
+                                Used=1
+                                ).Create()
+
+    def update(self, vehicle_status) -> None:
+        """Determine the actual value of the instrument and update the device in Domoticz."""
+        # TODO: make this based on the Locale language
+        states={0.0:"Not_In_Charge", # values taken from kamereon/enums.py
+                0.1:"Waiting_For_A_Planned_Charge",
+                0.2:"Charge_Ended",
+                0.3:"Waiting_For_Current_Charge",
+                0.4:"Energy_Flap_Opened",
+                1.0:"Charge_In_Progress",
+               -1.0:"Charge_Error",
+               -1.1:"Unavailable" 
+               }
+        plugs ={  0:" - Unplugged - ",
+                  1:" - Plugged - ",
+                 -1:" - PlugError - ",
+        -2147483648:" - PlugUnknown - "
+               }
+        if vehicle_status:
+            if self.exists():
+                text =vehicle_status[2].chargeMode
+                text+=plugs[vehicle_status[3].plugStatus]
+                state = vehicle_status[3].chargingStatus
+                if state in states:
+                    text+=states[state]
+                else:
+                    text+="Unknown chargingStatus: " + str(state)
+                Devices[self._unit_index].Update(nValue=0, sValue=text)
+                self.did_update()
+
+
 class RenaultPlugin(ReducedHeartBeat, MyRenaultConnector):
     """Domoticz plugin function implementation to get information from MyRenault."""
 
@@ -486,9 +578,11 @@ class RenaultPlugin(ReducedHeartBeat, MyRenaultConnector):
 
     def add_devices(self) -> None:
         """Add all the device classes that are part of this plugin."""
-        self._devices += [MileageRenaultDevice()]
+        self._devices += [DistanceRenaultDevice()]
         self._devices += [FuelRenaultDevice()]
         self._devices += [ChargeRenaultDevice()]
+        self._devices += [ChargeRenaultSwitch()]
+        self._devices += [ChargeRenaultStatus()]
 
     def create_devices(self) -> None:
         """Create the appropiate devices in Domoticz for the vehicle."""
@@ -537,6 +631,11 @@ def onHeartbeat() -> None:
     """Callback from Domoticz that the plugin can perform some work."""
     if _plugin:
         _plugin.onHeartbeat()
+
+def onCommand(Unit, Command, Level, Color) -> None:
+    """Callback from Domoticz that a command came in."""
+    if _plugin:
+        _plugin.onCommand(Unit, Command, Level, Color)
 
 def dump_config_to_log() -> None:
     """Dump the configuration of the plugin to the Domoticz debug log."""
