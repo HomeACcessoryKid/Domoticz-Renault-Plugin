@@ -8,10 +8,10 @@
 # Heavily inspired by https://github.com/joro75/Domoticz-Toyota-Plugin
 # Many thanks to John de Rooij!
 """
-<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.1.6"
+<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.1.7"
         externallink="https://github.com/HomeACcessoryKid/Domoticz-Renault-Plugin">
     <description>
-        <h2>Domoticz Renault Plugin 0.1.6</h2>
+        <h2>Domoticz Renault Plugin 0.1.7</h2>
         <ul style="list-style-type:none">
             <li>A Domoticz plugin that provides devices for a Renault car with connected services.</li>
             <li>It is using the same API that is used by the MyRenault connected service.</li>
@@ -104,6 +104,7 @@ import datetime
 from zoneinfo import ZoneInfo
 from typing import Any, Union, List, Tuple, Optional, Dict
 import arrow
+import math # for cosine of Latitude to do distance calculation to home
 
 REFRESH_RATE: int = 10
 
@@ -316,10 +317,6 @@ class MyRenaultConnector():
             Domoticz.Log(vehicle_status)
         return vehicle_status
 
-
-    def onCommand(self, Unit, Command, Level, Color) -> None:
-        """Process the command"""
-        Domoticz.Error("onCommand called for Unit " + str(Unit) + ": Parameter '" + str(Command))
 
     def disconnect(self) -> None:
         """Disconnect from the MyRenault servers."""
@@ -583,6 +580,7 @@ class RenaultPlugin(ReducedHeartBeat, MyRenaultConnector):
         self._devices += [ChargeRenaultDevice()]
         self._devices += [ChargeRenaultSwitch()]
         self._devices += [ChargeRenaultStatus()]
+        #TODO: refresh now push on button
 
     def create_devices(self) -> None:
         """Create the appropiate devices in Domoticz for the vehicle."""
@@ -596,8 +594,19 @@ class RenaultPlugin(ReducedHeartBeat, MyRenaultConnector):
         """Retrieve the status of the vehicle and update the Domoticz devices."""
         vehicle_status = self.retrieve_vehicle_status()
         if vehicle_status:
+            loc=Settings['Location'].split(';') # Domoticz home location
+            degreev=40000000/360                # meters at equator per degree
+            degreeh=degreev*math.cos(float(loc[0])*math.pi/180) # meters at home Latitude per degree
+            metersv=degreev*(float(loc[0])-vehicle_status[4].gpsLatitude)
+            metersh=degreeh*(float(loc[1])-vehicle_status[4].gpsLongitude)
+            dist=round(math.sqrt(metersv*metersv+metersh*metersh))
+            Domoticz.Error('Distance from home: ' + str(dist) + ' m')
             for device in self._devices:
                 device.update(vehicle_status)
+
+    def onCommand(self, Unit, Command, Level, Color) -> None:
+        """Process the command"""
+        Domoticz.Error("onCommand called for Unit " + str(Unit) + ": Parameter '" + str(Command))
 
 
 _plugin = RenaultPlugin() if 'renault_api' in sys.modules else None

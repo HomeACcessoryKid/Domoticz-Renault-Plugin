@@ -18,6 +18,9 @@ uses https://github.com/hacf-fr/renault-api as set in requirements.txt
 
 ## history
 
+#### 0.1.7 distance from home concept
+- and some small stuff
+
 #### 0.1.6 Status-device + Switch-device foundations
 - Status shows plugState, chargeStatus and scheduled or always charging
 - Switch will toggle between scheduled and always charging
