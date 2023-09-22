@@ -18,6 +18,9 @@ uses https://github.com/hacf-fr/renault-api as set in requirements.txt
 
 ## history
 
+#### 0.1.9 Distance from home device
+- flat earth calculation of distance from home
+
 #### 0.1.8 ChargeIt button
 - toggles between Always and Scheduled charging
 - status is now an alert and colors reflect plug and charging states

@@ -8,10 +8,10 @@
 # Heavily inspired by https://github.com/joro75/Domoticz-Toyota-Plugin
 # Many thanks to John de Rooij!
 """
-<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.1.8"
+<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.1.9"
         externallink="https://github.com/HomeACcessoryKid/Domoticz-Renault-Plugin">
     <description>
-        <h2>Domoticz Renault Plugin 0.1.8</h2>
+        <h2>Domoticz Renault Plugin 0.1.9</h2>
         <ul style="list-style-type:none">
             <li>A Domoticz plugin that provides devices for a Renault car with connected services.</li>
             <li>It is using the same API that is used by the MyRenault connected service.</li>
@@ -166,11 +166,12 @@ except (ModuleNotFoundError, ImportError):
 #     _importErrors += ['The python geopy library is not installed.']
 
 
-UNIT_DISTANCE_INDEX:int = 1
-UNIT_FUEL_INDEX:    int = 2
-UNIT_CHARGE_INDEX:  int = 3
-UNIT_SWITCH_INDEX:  int = 4
-UNIT_STATUS_INDEX:  int = 5
+UNIT_DISTANCE_INDEX:    int = 1
+UNIT_FUEL_INDEX:        int = 2
+UNIT_CHARGE_INDEX:      int = 3
+UNIT_SWITCH_INDEX:      int = 4
+UNIT_STATUS_INDEX:      int = 5
+UNIT_SEPARATION_INDEX:  int = 6
 
 class ReducedHeartBeat(ABC):
     """Helper class that only calls the update of the devices just before a specific multiple of minutes"""
@@ -615,6 +616,38 @@ class ChargeRenaultStatus(RenaultDomoticzDevice):
                 self.did_update()
 
 
+class SeparationRenaultDevice(RenaultDomoticzDevice):
+    """The Domoticz device that shows the distance between the parked car and home."""
+
+    def __init__(self) -> None:
+        super().__init__(UNIT_SEPARATION_INDEX)
+        self._home: Optional[Tuple[float, ...]] = None
+        if Settings['Location']: # we assume the earth is flat and square near the home location
+            self._home = tuple(float(part) for part in Settings['Location'].split(';'))
+            self._degreev: float=40000/360                                          # kmeters at equator per degree
+            self._degreeh=self._degreev*math.cos(float(self._home[0])*math.pi/180)  # kmeters at home Latitude per degree
+
+    def create(self, vehicle_status) -> None:
+        """Check if the device is present in Domoticz, and otherwise create it."""
+        if vehicle_status:
+            if not self.exists():
+                Domoticz.Device(Name='Distance to home', Unit=self._unit_index,
+                                TypeName='Custom Sensor', Type=243, Subtype=31,
+                                Options={'Custom': '1;km'},
+                                Used=1,
+                                Description='The distance between home and the car'
+                                ).Create()
+
+    def update(self, vehicle_status) -> None:
+        """Determine the actual value of the instrument and update the device in Domoticz."""
+        if vehicle_status:
+            if self.exists():
+                kmetersv=self._degreev*(float(self._home[0])-vehicle_status[4].gpsLatitude)
+                kmetersh=self._degreeh*(float(self._home[1])-vehicle_status[4].gpsLongitude)
+                dist=round(math.sqrt(kmetersv*kmetersv+kmetersh*kmetersh),3)
+                Devices[self._unit_index].Update(nValue=0, sValue=f'{dist}')
+
+
 class RenaultPlugin(ReducedHeartBeat, MyRenaultConnector):
     """Domoticz plugin function implementation to get information from MyRenault."""
 
@@ -630,6 +663,7 @@ class RenaultPlugin(ReducedHeartBeat, MyRenaultConnector):
         self._devices += [ChargeRenaultDevice()]
         self._devices += [ChargeRenaultSwitch()]
         self._devices += [ChargeRenaultStatus()]
+        self._devices += [SeparationRenaultDevice()]
         #TODO: refresh now push on button
 
     def create_devices(self) -> None:
@@ -644,13 +678,6 @@ class RenaultPlugin(ReducedHeartBeat, MyRenaultConnector):
         """Retrieve the status of the vehicle and update the Domoticz devices."""
         vehicle_status = self.retrieve_vehicle_status(command)
         if vehicle_status:
-            loc=Settings['Location'].split(';') # Domoticz home location
-            degreev=40000000/360                # meters at equator per degree
-            degreeh=degreev*math.cos(float(loc[0])*math.pi/180) # meters at home Latitude per degree
-            metersv=degreev*(float(loc[0])-vehicle_status[4].gpsLatitude)
-            metersh=degreeh*(float(loc[1])-vehicle_status[4].gpsLongitude)
-            dist=round(math.sqrt(metersv*metersv+metersh*metersh))
-            Domoticz.Error('Distance from home: ' + str(dist) + ' m')
             for device in self._devices:
                 device.update(vehicle_status)
 
