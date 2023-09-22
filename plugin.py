@@ -8,10 +8,10 @@
 # Heavily inspired by https://github.com/joro75/Domoticz-Toyota-Plugin
 # Many thanks to John de Rooij!
 """
-<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.1.7"
+<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.1.8"
         externallink="https://github.com/HomeACcessoryKid/Domoticz-Renault-Plugin">
     <description>
-        <h2>Domoticz Renault Plugin 0.1.7</h2>
+        <h2>Domoticz Renault Plugin 0.1.8</h2>
         <ul style="list-style-type:none">
             <li>A Domoticz plugin that provides devices for a Renault car with connected services.</li>
             <li>It is using the same API that is used by the MyRenault connected service.</li>
@@ -173,7 +173,7 @@ UNIT_SWITCH_INDEX:  int = 4
 UNIT_STATUS_INDEX:  int = 5
 
 class ReducedHeartBeat(ABC):
-    """Helper class that only calls the update of the devices just before the hour or midnight"""
+    """Helper class that only calls the update of the devices just before a specific multiple of minutes"""
 
     def __init__(self) -> None:
         super().__init__()
@@ -185,11 +185,11 @@ class ReducedHeartBeat(ABC):
         diff = now - self._last_update                   #prevent slip hit twice in 10s or skipping a beat
         if now.minute%REFRESH_RATE == REFRESH_RATE-1 and now.second > 39 and now.second < 51 and diff.seconds > 13:
             self._last_update = now
-            self.update_devices()
+            self.update_devices(0)
             
 
     @abstractmethod
-    def update_devices(self) -> None:
+    def update_devices(self, command: int) -> None:
         """Retrieve the status of the device and update the Domoticz devices."""
         return
 
@@ -260,9 +260,9 @@ class MyRenaultConnector():
                     Domoticz.Error('Error in get_vehicles:' + cars)
 
 
-    async def _retrieve_status(self) -> Union[Any, None]:
+    async def _retrieve_status(self, command: int) -> Union[Any, None]:
         """Get status from the Renault MyR servers."""
-        Domoticz.Debug('_retrieve_status')
+        Domoticz.Debug('_retrieve_status ' + str(command))
         now = datetime.datetime.now()
         attempt = 3
         while attempt:
@@ -272,6 +272,25 @@ class MyRenaultConnector():
                     await client.session.login(Parameters['Username'], Parameters['Password'])
                     account = await  client.get_api_account(self._accountId)
                     vehicle = await account.get_api_vehicle(self._car.vehicleDetails.vin)
+                    if command: # zero is reserved for no action, just collect vehicle_status
+                        if command <= 2:
+                            chargeCmd={ 1:"always_charging",
+                                        2:"schedule_mode"}
+                            chargeRes={ 1:"always",
+                                        2:"scheduled"}
+                            pending = 3
+                            while pending:
+                                Domoticz.Status(await vehicle.set_charge_mode(chargeCmd[command]))
+                                await asyncio.sleep(2)
+                                result = await vehicle.get_charge_mode()
+                                if result.chargeMode == chargeRes[command]:
+                                    pending = 0
+                                else:
+                                    pending -= 1
+                                    if pending:
+                                        await asyncio.sleep(5)
+                                    else:
+                                        Domoticz.Error("ChargeCommand was not executed!")
                     vehicle_status = []
                     vehicle_status.append(await vehicle.get_cockpit())        #[0] fuelAutonomy fuelQuantity totalMileage
                     vehicle_status.append(await vehicle.get_charges(now,now)) #[1] charges of today
@@ -285,10 +304,6 @@ class MyRenaultConnector():
                     #vehicle_status.append(await vehicle.get_notification_settings())        #broken
                     #vehicle_status.append(await vehicle.get_res_state())                    #broken
                     #vehicle_status.append(await vehicle.get_hvac_sessions(now,now))         #broken
-                    #await vehicle.set_charge_stop()                                         #weird behavior
-#                     await vehicle.set_charge_start()                                        #same as charge_mode always
-#                     vehicle_status.append(await vehicle.set_charge_mode("schedule_mode"  )) #works
-#                     vehicle_status.append(await vehicle.set_charge_mode("always_charging")) #works
                     return vehicle_status
             except (aiohttp.client_exceptions.ClientResponseError,
                     renault_api.kamereon.exceptions.FailedForwardException) as ex:
@@ -296,6 +311,8 @@ class MyRenaultConnector():
                 attempt -= 1
                 if attempt:
                     await asyncio.sleep(5)
+                else:
+                    Domoticz.Error("ClientResponseError was not solved!")
             except renault_api.exceptions.RenaultException as ex:
                 Domoticz.Error(f'Retrieve Error: {ex}')
                 attempt = 0
@@ -303,14 +320,14 @@ class MyRenaultConnector():
         return None
 
 
-    def retrieve_vehicle_status(self) -> Union[Any, None]:
+    def retrieve_vehicle_status(self, command: int) -> Union[Any, None]:
         """Retrieve and return the status information of the vehicle."""
         vehicle_status = None
         if not self._logged_on:
             asyncio.run(self._connect_to_myr())
         if self._logged_on:
             Domoticz.Log('Updating vehicle status')
-            vehicle_status = asyncio.run(self._retrieve_status())
+            vehicle_status = asyncio.run(self._retrieve_status(command))
         if vehicle_status is None:
             Domoticz.Error('Vehicle status could not be retrieved')
         else:
@@ -361,6 +378,13 @@ class RenaultDomoticzDevice(DomoticzDevice):
     def update(self, vehicle_status) -> None:
         """
         Determine the actual value of the instrument and
+        update the device in Domoticz.
+        """
+        return
+
+    def onCommand(self, Command, Level, Color) -> bool: # return: should all devices be updated by new API call
+        """
+        Process a command for this device and
         update the device in Domoticz.
         """
         return
@@ -464,7 +488,7 @@ class ChargeRenaultDevice(RenaultDomoticzDevice):
 
     def update(self, vehicle_status) -> None:
         """Determine the actual value of the instrument and update the device in Domoticz."""
-        if vehicle_status:
+        if vehicle_status: # TODO: make a at home and elsewhere counter...
             if self.exists():
                 old_csd_date=''
                 rd=vehicle_status[1].raw_data
@@ -516,6 +540,22 @@ class ChargeRenaultSwitch(RenaultDomoticzDevice):
 
     def update(self, vehicle_status) -> None:
         """Determine the actual value of the instrument and update the device in Domoticz."""
+        if vehicle_status:
+            if self.exists():
+                cm = vehicle_status[2].chargeMode
+                if cm == "always":
+                    Devices[self._unit_index].Update(nValue=1,sValue="")
+                else:
+                    Devices[self._unit_index].Update(nValue=0,sValue="")
+
+    def onCommand(self, Command, Level, Color) -> int: # return: command for update device state
+        """Process a command for this device and update the device in Domoticz."""
+        if self.exists():
+            if Command == "On":
+                return 1 # TODO: make enum # means always
+            if Command == "Off":
+                return 2 # means scheduled
+            return 0 # do nothing
 
 
 class ChargeRenaultStatus(RenaultDomoticzDevice):
@@ -530,8 +570,7 @@ class ChargeRenaultStatus(RenaultDomoticzDevice):
         if vehicle_status:
             if not self.exists():
                 Domoticz.Device(Name='chargingStatus', Unit=self._unit_index,
-                                Type=243, Subtype=19,  # Text Sensor
-                                Image=12, # Media player, looks like status Leds
+                                Type=243, Subtype=22, # Alert
                                 Used=1
                                 ).Create()
 
@@ -554,14 +593,25 @@ class ChargeRenaultStatus(RenaultDomoticzDevice):
                }
         if vehicle_status:
             if self.exists():
+                plugstatus=vehicle_status[3].plugStatus
                 text =vehicle_status[2].chargeMode
-                text+=plugs[vehicle_status[3].plugStatus]
+                text+=plugs[plugstatus]
                 state = vehicle_status[3].chargingStatus
                 if state in states:
                     text+=states[state]
                 else:
                     text+="Unknown chargingStatus: " + str(state)
-                Devices[self._unit_index].Update(nValue=0, sValue=text)
+                if plugstatus < 0 or state < 0:
+                    level = 4
+                else:
+                    if plugstatus == 0:
+                        level = 0
+                    else:
+                        if state < 1:
+                            level = 1
+                        else:
+                            level = 2
+                Devices[self._unit_index].Update(nValue=level, sValue=text)
                 self.did_update()
 
 
@@ -584,15 +634,15 @@ class RenaultPlugin(ReducedHeartBeat, MyRenaultConnector):
 
     def create_devices(self) -> None:
         """Create the appropiate devices in Domoticz for the vehicle."""
-        vehicle_status = self.retrieve_vehicle_status()
+        vehicle_status = self.retrieve_vehicle_status(0)
         if vehicle_status:
             for device in self._devices:
                 device.create(vehicle_status)
                 device.update(vehicle_status)
 
-    def update_devices(self) -> None:
+    def update_devices(self, command: int) -> None:
         """Retrieve the status of the vehicle and update the Domoticz devices."""
-        vehicle_status = self.retrieve_vehicle_status()
+        vehicle_status = self.retrieve_vehicle_status(command)
         if vehicle_status:
             loc=Settings['Location'].split(';') # Domoticz home location
             degreev=40000000/360                # meters at equator per degree
@@ -606,7 +656,9 @@ class RenaultPlugin(ReducedHeartBeat, MyRenaultConnector):
 
     def onCommand(self, Unit, Command, Level, Color) -> None:
         """Process the command"""
-        Domoticz.Error("onCommand called for Unit " + str(Unit) + ": Parameter '" + str(Command))
+        for device in self._devices:
+            if Unit == device._unit_index:
+                self.update_devices(device.onCommand(Command, Level, Color))
 
 
 _plugin = RenaultPlugin() if 'renault_api' in sys.modules else None
