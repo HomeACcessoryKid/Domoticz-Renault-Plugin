@@ -8,10 +8,10 @@
 # Heavily inspired by https://github.com/joro75/Domoticz-Toyota-Plugin
 # Many thanks to John de Rooij!
 """
-<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.1.9"
+<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.2.0"
         externallink="https://github.com/HomeACcessoryKid/Domoticz-Renault-Plugin">
     <description>
-        <h2>Domoticz Renault Plugin 0.1.9</h2>
+        <h2>Domoticz Renault Plugin 0.2.0</h2>
         <ul style="list-style-type:none">
             <li>A Domoticz plugin that provides devices for a Renault car with connected services.</li>
             <li>It is using the same API that is used by the MyRenault connected service.</li>
@@ -103,7 +103,6 @@ import aiohttp
 import datetime
 from zoneinfo import ZoneInfo
 from typing import Any, Union, List, Tuple, Optional, Dict
-import arrow
 import math # for cosine of Latitude to do distance calculation to home
 
 REFRESH_RATE: int = 10
@@ -190,7 +189,7 @@ class ReducedHeartBeat(ABC):
             
 
     @abstractmethod
-    def update_devices(self, command: int) -> None:
+    def update_devices(self, action: int) -> None:
         """Retrieve the status of the device and update the Domoticz devices."""
         return
 
@@ -261,9 +260,9 @@ class MyRenaultConnector():
                     Domoticz.Error('Error in get_vehicles:' + cars)
 
 
-    async def _retrieve_status(self, command: int) -> Union[Any, None]:
+    async def _engage_vehicle(self, action: int) -> Union[Any, None]:
         """Get status from the Renault MyR servers."""
-        Domoticz.Debug('_retrieve_status ' + str(command))
+        Domoticz.Debug('_engage_vehicle ' + str(action))
         now = datetime.datetime.now()
         attempt = 3
         while attempt:
@@ -273,18 +272,18 @@ class MyRenaultConnector():
                     await client.session.login(Parameters['Username'], Parameters['Password'])
                     account = await  client.get_api_account(self._accountId)
                     vehicle = await account.get_api_vehicle(self._car.vehicleDetails.vin)
-                    if command: # zero is reserved for no action, just collect vehicle_status
-                        if command <= 2:
+                    if action: # zero is reserved for no action, just collect vehicle_status
+                        if action <= 2:
                             chargeCmd={ 1:"always_charging",
                                         2:"schedule_mode"}
                             chargeRes={ 1:"always",
                                         2:"scheduled"}
                             pending = 3
                             while pending:
-                                Domoticz.Status(await vehicle.set_charge_mode(chargeCmd[command]))
+                                Domoticz.Status(await vehicle.set_charge_mode(chargeCmd[action]))
                                 await asyncio.sleep(2)
                                 result = await vehicle.get_charge_mode()
-                                if result.chargeMode == chargeRes[command]:
+                                if result.chargeMode == chargeRes[action]:
                                     pending = 0
                                 else:
                                     pending -= 1
@@ -314,6 +313,9 @@ class MyRenaultConnector():
                     await asyncio.sleep(5)
                 else:
                     Domoticz.Error("ClientResponseError was not solved!")
+            except renault_api.kamereon.exceptions.QuotaLimitException as ex:
+                Domoticz.Error(f'Overload Error: {ex}')
+                attempt = 0
             except renault_api.exceptions.RenaultException as ex:
                 Domoticz.Error(f'Retrieve Error: {ex}')
                 attempt = 0
@@ -321,14 +323,14 @@ class MyRenaultConnector():
         return None
 
 
-    def retrieve_vehicle_status(self, command: int) -> Union[Any, None]:
-        """Retrieve and return the status information of the vehicle."""
+    def engage_vehicle(self, action: int = 0) -> Union[Any, None]:
+        """Perform action and Retrieve the status information of the vehicle."""
         vehicle_status = None
         if not self._logged_on:
             asyncio.run(self._connect_to_myr())
         if self._logged_on:
-            Domoticz.Log('Updating vehicle status')
-            vehicle_status = asyncio.run(self._retrieve_status(command))
+            Domoticz.Log('Engaging Vehicle')
+            vehicle_status = asyncio.run(self._engage_vehicle(action))
         if vehicle_status is None:
             Domoticz.Error('Vehicle status could not be retrieved')
         else:
@@ -376,14 +378,14 @@ class RenaultDomoticzDevice(DomoticzDevice):
         """Check if the device is present in Domoticz, and otherwise create it."""
         return
 
-    def update(self, vehicle_status) -> None:
+    def update(self, vehicle_status) -> int:
         """
         Determine the actual value of the instrument and
         update the device in Domoticz.
         """
         return
 
-    def onCommand(self, Command, Level, Color) -> bool: # return: should all devices be updated by new API call
+    def onCommand(self, Command, Level, Color) -> int: # return: which action to apply
         """
         Process a command for this device and
         update the device in Domoticz.
@@ -417,7 +419,7 @@ class DistanceRenaultDevice(RenaultDomoticzDevice): # TODO: make option for mile
             except ValueError:
                 self._last_distance = 0
 
-    def update(self, vehicle_status) -> None:
+    def update(self, vehicle_status) -> int:
         """Determine the actual value of the instrument and update the device in Domoticz."""
         if vehicle_status:
             if self.exists():
@@ -453,7 +455,7 @@ class FuelRenaultDevice(RenaultDomoticzDevice):
             except ValueError:
                 self._last_fuel = 0
 
-    def update(self, vehicle_status) -> None:
+    def update(self, vehicle_status) -> int:
         """Determine the actual value of the instrument and update the device in Domoticz."""
         if vehicle_status:
             if self.exists():
@@ -487,7 +489,7 @@ class ChargeRenaultDevice(RenaultDomoticzDevice):
             except ValueError:
                 self._last_fuel = 0
 
-    def update(self, vehicle_status) -> None:
+    def update(self, vehicle_status) -> int:
         """Determine the actual value of the instrument and update the device in Domoticz."""
         if vehicle_status: # TODO: make a at home and elsewhere counter...
             if self.exists():
@@ -539,7 +541,7 @@ class ChargeRenaultSwitch(RenaultDomoticzDevice):
             except ValueError:
                 self._last_mode = False
 
-    def update(self, vehicle_status) -> None:
+    def update(self, vehicle_status) -> int:
         """Determine the actual value of the instrument and update the device in Domoticz."""
         if vehicle_status:
             if self.exists():
@@ -549,7 +551,7 @@ class ChargeRenaultSwitch(RenaultDomoticzDevice):
                 else:
                     Devices[self._unit_index].Update(nValue=0,sValue="")
 
-    def onCommand(self, Command, Level, Color) -> int: # return: command for update device state
+    def onCommand(self, Command, Level, Color) -> int: # return: which action to apply
         """Process a command for this device and update the device in Domoticz."""
         if self.exists():
             if Command == "On":
@@ -575,7 +577,7 @@ class ChargeRenaultStatus(RenaultDomoticzDevice):
                                 Used=1
                                 ).Create()
 
-    def update(self, vehicle_status) -> None:
+    def update(self, vehicle_status) -> int:
         """Determine the actual value of the instrument and update the device in Domoticz."""
         # TODO: make this based on the Locale language
         states={0.0:"Not_In_Charge", # values taken from kamereon/enums.py
@@ -614,6 +616,7 @@ class ChargeRenaultStatus(RenaultDomoticzDevice):
                             level = 2
                 Devices[self._unit_index].Update(nValue=level, sValue=text)
                 self.did_update()
+                #return 1 # order action always_charging
 
 
 class SeparationRenaultDevice(RenaultDomoticzDevice):
@@ -638,7 +641,7 @@ class SeparationRenaultDevice(RenaultDomoticzDevice):
                                 Description='The distance between home and the car'
                                 ).Create()
 
-    def update(self, vehicle_status) -> None:
+    def update(self, vehicle_status) -> int:
         """Determine the actual value of the instrument and update the device in Domoticz."""
         if vehicle_status:
             if self.exists():
@@ -654,32 +657,41 @@ class RenaultPlugin(ReducedHeartBeat, MyRenaultConnector):
     def __init__(self) -> None:
         super().__init__()
         self._devices: List[RenaultDomoticzDevice] = []
-        self._now = arrow.now()
 
     def add_devices(self) -> None:
         """Add all the device classes that are part of this plugin."""
+        self._devices += [SeparationRenaultDevice()]
         self._devices += [DistanceRenaultDevice()]
         self._devices += [FuelRenaultDevice()]
         self._devices += [ChargeRenaultDevice()]
         self._devices += [ChargeRenaultSwitch()]
-        self._devices += [ChargeRenaultStatus()]
-        self._devices += [SeparationRenaultDevice()]
         #TODO: refresh now push on button
+        self._devices += [ChargeRenaultStatus()]
 
     def create_devices(self) -> None:
         """Create the appropiate devices in Domoticz for the vehicle."""
-        vehicle_status = self.retrieve_vehicle_status(0)
+        vehicle_status = self.engage_vehicle()
         if vehicle_status:
             for device in self._devices:
                 device.create(vehicle_status)
-                device.update(vehicle_status)
+                device.update(vehicle_status) # TODO: need to process next_action here too?
 
-    def update_devices(self, command: int) -> None:
+    def update_devices(self, action: int) -> None:
         """Retrieve the status of the vehicle and update the Domoticz devices."""
-        vehicle_status = self.retrieve_vehicle_status(command)
-        if vehicle_status:
-            for device in self._devices:
-                device.update(vehicle_status)
+        turn = 2 # how often engage_vehicle can be called max
+        next_action = action
+        while turn:
+            vehicle_status = self.engage_vehicle(next_action)
+            next_action = 0
+            if vehicle_status:
+                for device in self._devices:
+                    try:
+                        next_action+=device.update(vehicle_status)
+                    except TypeError: # allows update to not return action explicitly
+                        pass
+                turn = turn - 1 if next_action else 0
+            else:
+                turn = 0
 
     def onCommand(self, Unit, Command, Level, Color) -> None:
         """Process the command"""
