@@ -25,6 +25,10 @@ uses https://github.com/hacf-fr/renault-api as set in requirements.txt
 
 ## history
 
+#### 0.2.1 introduction of class Action
+- cleaner control over actions
+- in preparation of business logic updates
+
 #### 0.2.0 based on collected state, able to order an action
 - make stateDevice the last in line so it can combine other device values to decide on charging etc.
 - renamed stuff to fit better with the plan
