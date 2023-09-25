@@ -8,10 +8,10 @@
 # Heavily inspired by https://github.com/joro75/Domoticz-Toyota-Plugin
 # Many thanks to John de Rooij!
 """
-<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.2.1"
+<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.2.2"
         externallink="https://github.com/HomeACcessoryKid/Domoticz-Renault-Plugin">
     <description>
-        <h2>Domoticz Renault Plugin 0.2.1</h2>
+        <h2>Domoticz Renault Plugin 0.2.2</h2>
         <ul style="list-style-type:none">
             <li>A Domoticz plugin that provides devices for a Renault car with connected services.</li>
             <li>It is using the same API that is used by the MyRenault connected service.</li>
@@ -285,7 +285,7 @@ class MyRenaultConnector():
 
     async def _engage_vehicle(self, action: Action) -> Union[Any, None]:
         """Get status from the Renault MyR servers."""
-        Domoticz.Error('_engage_vehicle ' + action.name)
+        Domoticz.Debug('_engage_vehicle ' + action.name)
         now = datetime.datetime.now()
         attempt = 3
         while attempt:
@@ -306,6 +306,26 @@ class MyRenaultConnector():
                                     Domoticz.Status(await vehicle.set_charge_mode(action.api_cmd()))
                                     await asyncio.sleep(3)
                                     pending -= 1
+#                         if action in Action.AC_ON:
+#                             pending = 3
+#                             while pending:
+#                                 result = await vehicle.get_hvac_status()
+#                                 if result.hvacStatus == action.api_res():
+#                                     pending = 0
+#                                 else:
+#                                     Domoticz.Status(await vehicle.set_ac_start(20.0))
+#                                     await asyncio.sleep(3)
+#                                     pending -= 1
+#                         if action in Action.AC_OFF:
+#                             pending = 3
+#                             while pending:
+#                                 result = await vehicle.get_hvac_status()
+#                                 if result.hvacStatus == action.api_res():
+#                                     pending = 0
+#                                 else:
+#                                     Domoticz.Status(await vehicle.set_ac_stop())
+#                                     await asyncio.sleep(3)
+#                                     pending -= 1
                     vehicle_status = []
                     vehicle_status.append(await vehicle.get_cockpit())        #[0] fuelAutonomy fuelQuantity totalMileage
                     vehicle_status.append(await vehicle.get_charges(now,now)) #[1] charges of today
@@ -313,6 +333,13 @@ class MyRenaultConnector():
                     vehicle_status.append(await vehicle.get_battery_status()) #[3] timestamp batteryLevel batteryAutonomy plugStatus chargingStatus
                     vehicle_status.append(await vehicle.get_location())       #[4] timestamp gpsLongitude gpsLatitude lastUpdateTime gpsDirection
                     vehicle_status.append(await vehicle.get_hvac_status())    #[5] hvacStatus socThreshold internalTemperature lastUpdateTime
+#                     vehicle_status.append(await vehicle.get_details())
+#                     vehicle_status.append(await vehicle.get_charging_settings())
+#                     vehicle_status.append(await vehicle.get_hvac_settings())
+                    #vehicle_status.append(await vehicle.get_lock_status())                  #broken
+                    #vehicle_status.append(await vehicle.get_notification_settings())        #broken
+                    #vehicle_status.append(await vehicle.get_res_state())                    #broken
+                    #vehicle_status.append(await vehicle.get_hvac_sessions(now,now))         #broken
                     return vehicle_status
             except (aiohttp.client_exceptions.ClientResponseError,
                     renault_api.kamereon.exceptions.FailedForwardException) as ex:
@@ -400,6 +427,38 @@ class RenaultDomoticzDevice(DomoticzDevice):
         update the device in Domoticz.
         """
         return
+
+class SeparationRenaultDevice(RenaultDomoticzDevice):
+    """The Domoticz device that shows the distance between the parked car and home."""
+
+    def __init__(self) -> None:
+        super().__init__(UNIT_SEPARATION_INDEX)
+        self._home: Optional[Tuple[float, ...]] = None
+        if Settings['Location']: # we assume the earth is flat and square near the home location
+            self._home = tuple(float(part) for part in Settings['Location'].split(';'))
+            self._degreev: float=40000/360                                          # kmeters at equator per degree
+            self._degreeh=self._degreev*math.cos(float(self._home[0])*math.pi/180)  # kmeters at home Latitude per degree
+
+    def create(self, vehicle_status) -> None:
+        """Check if the device is present in Domoticz, and otherwise create it."""
+        if vehicle_status:
+            if not self.exists():
+                Domoticz.Device(Name='Distance to home', Unit=self._unit_index,
+                                TypeName='Custom Sensor', Type=243, Subtype=31,
+                                Options={'Custom': '1;km'},
+                                Used=1,
+                                Description='The distance between home and the car'
+                                ).Create()
+
+    def update(self, vehicle_status) -> Action:
+        """Determine the actual value of the instrument and update the device in Domoticz."""
+        if vehicle_status:
+            if self.exists():
+                kmetersv=self._degreev*(float(self._home[0])-vehicle_status[4].gpsLatitude)
+                kmetersh=self._degreeh*(float(self._home[1])-vehicle_status[4].gpsLongitude)
+                dist=round(math.sqrt(kmetersv*kmetersv+kmetersh*kmetersh),3)
+                Devices[self._unit_index].Update(nValue=0, sValue=f'{dist}')
+
 
 class DistanceRenaultDevice(RenaultDomoticzDevice): # TODO: make option for miles based on relevant locale?
     """The Domoticz device that shows the distance."""
@@ -533,39 +592,31 @@ class ChargeRenaultSwitch(RenaultDomoticzDevice):
 
     def __init__(self) -> None:
         super().__init__(UNIT_SWITCH_INDEX)
-        self._last_mode: bool = False
 
     def create(self, vehicle_status) -> None:
         """Check if the device is present in Domoticz, and otherwise create it."""
         if vehicle_status:
             if not self.exists():
-                Domoticz.Device(Name='ChargeIt', Unit=self._unit_index,
+                Domoticz.Device(Name='ChargeWhenAtHome', Unit=self._unit_index,
                                 Type=244, Subtype=73, Switchtype=0, # Switch on/off
-                                Description="Toggle between Scheduled and Always charging",
+                                Description="Toggle between Scheduled and Always charging in case at Home and Plugged in",
                                 Used=1
                                 ).Create()
-        if self.exists():
-            try:
-                self._last_mode =  bool(Devices[self._unit_index].sValue)
-            except ValueError:
-                self._last_mode = False
-
-    def update(self, vehicle_status) -> Action:
-        """Determine the actual value of the instrument and update the device in Domoticz."""
-        if vehicle_status:
-            if self.exists():
-                if vehicle_status[2].chargeMode == Action.CHARGE_ALWAYS.api_res():
-                    Devices[self._unit_index].Update(nValue=1,sValue="")
-                else:
-                    Devices[self._unit_index].Update(nValue=0,sValue="")
 
     def onCommand(self, Command, Level, Color) -> Action: # return: which action to apply
         """Process a command for this device and update the device in Domoticz."""
         if self.exists():
             if Command == "On":
+                Devices[self._unit_index].Update(nValue=1,sValue="")
                 return Action.CHARGE_ALWAYS
             if Command == "Off":
-                return Action.CHARGE_SCHEDULED
+                Devices[self._unit_index].Update(nValue=0,sValue="")
+                plugged_in = True if Devices[UNIT_STATUS_INDEX].nValue else False # TODO: decide what to do with level 4 Error
+                dst_from_home =  Devices[UNIT_SEPARATION_INDEX].sValue
+                if plugged_in and float(dst_from_home) < 0.05:  # less than 50m is Home ??
+                    return Action.CHARGE_SCHEDULED
+                else:
+                    return Action.CHARGE_ALWAYS
             return Action.NO_ACTION
 
 
@@ -574,7 +625,6 @@ class ChargeRenaultStatus(RenaultDomoticzDevice):
 
     def __init__(self) -> None:
         super().__init__(UNIT_STATUS_INDEX)
-        self._last_mode: bool = False
 
     def create(self, vehicle_status) -> None:
         """Check if the device is present in Domoticz, and otherwise create it."""
@@ -604,10 +654,11 @@ class ChargeRenaultStatus(RenaultDomoticzDevice):
                }
         if vehicle_status:
             if self.exists():
+                chargeMode = vehicle_status[2].chargeMode
                 plugstatus=vehicle_status[3].plugStatus
-                text =vehicle_status[2].chargeMode
-                text+=plugs[plugstatus]
                 state = vehicle_status[3].chargingStatus
+                text = chargeMode
+                text+=plugs[plugstatus]
                 if state in states:
                     text+=states[state]
                 else:
@@ -623,39 +674,18 @@ class ChargeRenaultStatus(RenaultDomoticzDevice):
                         else:
                             level = 2
                 Devices[self._unit_index].Update(nValue=level, sValue=text)
-                self.did_update()
-
-
-class SeparationRenaultDevice(RenaultDomoticzDevice):
-    """The Domoticz device that shows the distance between the parked car and home."""
-
-    def __init__(self) -> None:
-        super().__init__(UNIT_SEPARATION_INDEX)
-        self._home: Optional[Tuple[float, ...]] = None
-        if Settings['Location']: # we assume the earth is flat and square near the home location
-            self._home = tuple(float(part) for part in Settings['Location'].split(';'))
-            self._degreev: float=40000/360                                          # kmeters at equator per degree
-            self._degreeh=self._degreev*math.cos(float(self._home[0])*math.pi/180)  # kmeters at home Latitude per degree
-
-    def create(self, vehicle_status) -> None:
-        """Check if the device is present in Domoticz, and otherwise create it."""
-        if vehicle_status:
-            if not self.exists():
-                Domoticz.Device(Name='Distance to home', Unit=self._unit_index,
-                                TypeName='Custom Sensor', Type=243, Subtype=31,
-                                Options={'Custom': '1;km'},
-                                Used=1,
-                                Description='The distance between home and the car'
-                                ).Create()
-
-    def update(self, vehicle_status) -> Action:
-        """Determine the actual value of the instrument and update the device in Domoticz."""
-        if vehicle_status:
-            if self.exists():
-                kmetersv=self._degreev*(float(self._home[0])-vehicle_status[4].gpsLatitude)
-                kmetersh=self._degreeh*(float(self._home[1])-vehicle_status[4].gpsLongitude)
-                dist=round(math.sqrt(kmetersv*kmetersv+kmetersh*kmetersh),3)
-                Devices[self._unit_index].Update(nValue=0, sValue=f'{dist}')
+                action = Action.CHARGE_ALWAYS
+                if plugstatus == 1:
+                    dst_from_home = Devices[UNIT_SEPARATION_INDEX].sValue
+                    if float(dst_from_home) < 0.05:
+                        if Devices[UNIT_SWITCH_INDEX].nValue == 0:
+                            action = Action.CHARGE_SCHEDULED
+                Domoticz.Debug(chargeMode)
+                Domoticz.Debug(action.api_res())
+                if chargeMode == action.api_res():
+                    return Action.NO_ACTION
+                else:
+                    return action
 
 
 class RenaultPlugin(ReducedHeartBeat, MyRenaultConnector):
@@ -696,6 +726,7 @@ class RenaultPlugin(ReducedHeartBeat, MyRenaultConnector):
                         next_action = next_action | device.update(vehicle_status)
                     except TypeError: # allows update to not return action explicitly
                         pass
+                Domoticz.Status(next_action)
                 turn = turn - 1 if next_action else 0
             else:
                 turn = 0
