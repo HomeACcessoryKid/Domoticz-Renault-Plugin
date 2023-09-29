@@ -8,10 +8,10 @@
 # Heavily inspired by https://github.com/joro75/Domoticz-Toyota-Plugin
 # Many thanks to John de Rooij!
 """
-<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.2.2"
+<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.2.3"
         externallink="https://github.com/HomeACcessoryKid/Domoticz-Renault-Plugin">
     <description>
-        <h2>Domoticz Renault Plugin 0.2.2</h2>
+        <h2>Domoticz Renault Plugin 0.2.3</h2>
         <ul style="list-style-type:none">
             <li>A Domoticz plugin that provides devices for a Renault car with connected services.</li>
             <li>It is using the same API that is used by the MyRenault connected service.</li>
@@ -27,7 +27,9 @@
             <li>Fuel level - Shows the current fuel level percentage</li>
             <li>Charge - Shows the charges made and the energy increase</li>
             <li>ChargingStatus - Shows plugState, chargingStatus and if Scheduled or Always charging</li>
-            <li>ChargeIt - Toggle between Scheduled and Always charging</li>
+            <li>ChargeWhenAtHome - Toggle between Scheduled and Always charging, when at Home</li>
+            <li>Distance to Home - How far away is your car from home in a straight line.</li>
+            <li>RefreshNow - Update all sensors</li>
         </ul>
         <h3>Configuration</h3>
         <ul style="list-style-type:square">
@@ -110,8 +112,6 @@ REFRESH_RATE: int = 10
 
 MINIMUM_PYTHON_VERSION = (3, 8)
 MINIMUM_MYRENAULT_VERSION: str = '0.2.0'
-# MINIMUM_GEOPY_VERSION: str = '2.3.0'
-# NOMINATIM_USER_AGENT = 'Domoticz-Renault-Plugin'
 
 _importErrors = []
 
@@ -152,19 +152,6 @@ try:
 except (ModuleNotFoundError, ImportError):
     _importErrors += ['The Python renault_api library is not installed.']
 
-# try:
-#     import geopy.distance
-#     geopy_version = Version(geopy.__version__)
-#     if geopy_version < Version(MINIMUM_GEOPY_VERSION):
-#         _importErrors += ['The geopy version is too old, an update is needed.']
-#         del geopy
-#         del sys.modules['geopy']
-# 
-#     if 'geopy' in sys.modules:
-#         from geopy.geocoders import Nominatim
-# except (ModuleNotFoundError, ImportError):
-#     _importErrors += ['The python geopy library is not installed.']
-
 
 UNIT_DISTANCE_INDEX:    int = 1
 UNIT_FUEL_INDEX:        int = 2
@@ -172,6 +159,7 @@ UNIT_CHARGE_INDEX:      int = 3
 UNIT_SWITCH_INDEX:      int = 4
 UNIT_STATUS_INDEX:      int = 5
 UNIT_SEPARATION_INDEX:  int = 6
+UNIT_REFRESH_INDEX:     int = 7
 
 class Action(Flag):
     NO_ACTION        = 0
@@ -254,7 +242,8 @@ class MyRenaultConnector():
                 Domoticz.Status('Using accountID: ' + self._accountId)
                 account = await client.get_api_account(self._accountId)
                 self._logged_on = True
-            except renault_api.exceptions.RenaultException as ex:
+            except (aiohttp.client_exceptions.ClientResponseError,
+                    renault_api.exceptions.RenaultException) as ex:
                 Domoticz.Error(f'Login Failed: {ex}')
             if self._logged_on:
                 Domoticz.Log('Succesfully logged on')
@@ -342,13 +331,12 @@ class MyRenaultConnector():
                     #vehicle_status.append(await vehicle.get_hvac_sessions(now,now))         #broken
                     return vehicle_status
             except (aiohttp.client_exceptions.ClientResponseError,
+                    aiohttp.client_exceptions.ClientConnectorError,
                     renault_api.kamereon.exceptions.FailedForwardException) as ex:
                 Domoticz.Error(f'Try again? {attempt}: {ex}')
                 attempt -= 1
                 if attempt:
                     await asyncio.sleep(5)
-                else:
-                    Domoticz.Error("ClientResponseError was not solved!")
             except renault_api.kamereon.exceptions.QuotaLimitException as ex:
                 Domoticz.Error(f'Overload Error: {ex}')
                 attempt = 0
@@ -620,6 +608,29 @@ class ChargeRenaultSwitch(RenaultDomoticzDevice):
             return Action.NO_ACTION
 
 
+class RefreshRenaultSwitch(RenaultDomoticzDevice):
+    """The Domoticz device that refreshes readings"""
+
+    def __init__(self) -> None:
+        super().__init__(UNIT_REFRESH_INDEX)
+
+    def create(self, vehicle_status) -> None:
+        """Check if the device is present in Domoticz, and otherwise create it."""
+        if vehicle_status:
+            if not self.exists():
+                Domoticz.Device(Name='RefreshNow', Unit=self._unit_index,
+                                Type=244, Subtype=73, Switchtype=9, # PushOn
+                                Description="Refresh car readings now",
+                                Used=1
+                                ).Create()
+
+    def onCommand(self, Command, Level, Color) -> Action: # return: which action to apply
+        """Process a command for this device and update the device in Domoticz."""
+        if self.exists():
+            if Command == "On":
+                return Action.NO_ACTION
+
+
 class ChargeRenaultStatus(RenaultDomoticzDevice):
     """The Domoticz device that shows three charging statuses"""
 
@@ -702,7 +713,7 @@ class RenaultPlugin(ReducedHeartBeat, MyRenaultConnector):
         self._devices += [FuelRenaultDevice()]
         self._devices += [ChargeRenaultDevice()]
         self._devices += [ChargeRenaultSwitch()]
-        #TODO: refresh now push on button
+        self._devices += [RefreshRenaultSwitch()]
         self._devices += [ChargeRenaultStatus()]
 
     def create_devices(self) -> None:

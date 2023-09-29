@@ -25,6 +25,10 @@ uses https://github.com/hacf-fr/renault-api as set in requirements.txt
 
 ## history
 
+#### 0.2.3 added RefreshNow button
+- added some more exception handling
+- also cleaned geopy since not in favor of address detection concept
+
 #### 0.2.2 charge strategy implemented as described in README
 - only send action command in case there is a delta
 - Car Home is at less than 50m from Domoticz Home
