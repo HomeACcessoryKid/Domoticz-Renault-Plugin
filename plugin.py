@@ -8,10 +8,10 @@
 # Heavily inspired by https://github.com/joro75/Domoticz-Toyota-Plugin
 # Many thanks to John de Rooij!
 """
-<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.2.3"
+<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.2.4"
         externallink="https://github.com/HomeACcessoryKid/Domoticz-Renault-Plugin">
     <description>
-        <h2>Domoticz Renault Plugin 0.2.3</h2>
+        <h2>Domoticz Renault Plugin 0.2.4</h2>
         <ul style="list-style-type:none">
             <li>A Domoticz plugin that provides devices for a Renault car with connected services.</li>
             <li>It is using the same API that is used by the MyRenault connected service.</li>
@@ -398,7 +398,7 @@ class RenaultDomoticzDevice(DomoticzDevice):
     """
 
     @abstractmethod
-    def create(self, vehicle_status) -> None:
+    def create(self) -> None:
         """Check if the device is present in Domoticz, and otherwise create it."""
         return
 
@@ -427,16 +427,15 @@ class SeparationRenaultDevice(RenaultDomoticzDevice):
             self._degreev: float=40000/360                                          # kmeters at equator per degree
             self._degreeh=self._degreev*math.cos(float(self._home[0])*math.pi/180)  # kmeters at home Latitude per degree
 
-    def create(self, vehicle_status) -> None:
+    def create(self) -> None:
         """Check if the device is present in Domoticz, and otherwise create it."""
-        if vehicle_status:
-            if not self.exists():
-                Domoticz.Device(Name='Distance to home', Unit=self._unit_index,
-                                TypeName='Custom Sensor', Type=243, Subtype=31,
-                                Options={'Custom': '1;km'},
-                                Used=1,
-                                Description='The distance between home and the car'
-                                ).Create()
+        if not self.exists():
+            Domoticz.Device(Name='Distance to home', Unit=self._unit_index,
+                            TypeName='Custom Sensor', Type=243, Subtype=31,
+                            Options={'Custom': '1;km'},
+                            Used=1,
+                            Description='The distance between home and the car'
+                            ).Create()
 
     def update(self, vehicle_status) -> Action:
         """Determine the actual value of the instrument and update the device in Domoticz."""
@@ -455,18 +454,17 @@ class DistanceRenaultDevice(RenaultDomoticzDevice): # TODO: make option for mile
         super().__init__(UNIT_DISTANCE_INDEX)
         self._last_distance: int = 0
 
-    def create(self, vehicle_status) -> None:
+    def create(self) -> None:
         """Check if the device is present in Domoticz, and otherwise create it."""
-        if vehicle_status:
-            if not self.exists():
-                Domoticz.Device(Name='Distance', Unit=self._unit_index,
-                                Type=113, Switchtype=3,
-                                Used=1,
-                                Description='Counter to hold the overall distance',
-                                Options={'ValueQuantity': 'Distance',
-                                         'ValueUnits': 'km',
-                                        }
-                                ).Create()
+        if not self.exists():
+            Domoticz.Device(Name='Distance', Unit=self._unit_index,
+                            Type=113, Switchtype=3,
+                            Used=1,
+                            Description='Counter to hold the overall distance',
+                            Options={'ValueQuantity': 'Distance',
+                                     'ValueUnits': 'km',
+                                    }
+                            ).Create()
 
         # Retrieve the last distance that is already known in Domoticz
         if self.exists():
@@ -494,17 +492,15 @@ class FuelRenaultDevice(RenaultDomoticzDevice):
         super().__init__(UNIT_FUEL_INDEX)
         self._last_fuel: float = 0.0
 
-    def create(self, vehicle_status) -> None:
+    def create(self) -> None:
         """Check if the device is present in Domoticz, and otherwise create it."""
-        if vehicle_status:
-            if not self.exists():
-                Domoticz.Device(Name='Fuel level', Unit=self._unit_index,
-                                TypeName='Percentage',
-                                Used=1,
-                                Image=10, # LogFire (represents Fossil Fuel)
-                                Description='The filled percentage of the fuel tank'
-                                ).Create()
-
+        if not self.exists():
+            Domoticz.Device(Name='Fuel level', Unit=self._unit_index,
+                            TypeName='Percentage',
+                            Used=1,
+                            Image=10, # LogFire (represents Fossil Fuel)
+                            Description='The filled percentage of the fuel tank'
+                            ).Create()
         if self.exists():
             try:
                 self._last_fuel = float(Devices[self._unit_index].sValue)
@@ -529,16 +525,15 @@ class ChargeRenaultDevice(RenaultDomoticzDevice):
         super().__init__(UNIT_CHARGE_INDEX)
         self._last_fuel: float = 0.0
 
-    def create(self, vehicle_status) -> None:
+    def create(self) -> None:
         """Check if the device is present in Domoticz, and otherwise create it."""
-        if vehicle_status:
-            if not self.exists():
-                Domoticz.Device(Name='Charge', Unit=self._unit_index,
-                                Type=243, Subtype=33, Switchtype=0, # Managed Counter
-                                Used=1,
-                                Image=1, # Wall Socket (represents Electric Energy)
-                                Description='The amount of energy charged'
-                                ).Create()
+        if not self.exists():
+            Domoticz.Device(Name='Charge', Unit=self._unit_index,
+                            Type=243, Subtype=33, Switchtype=0, # Managed Counter
+                            Used=1,
+                            Image=1, # Wall Socket (represents Electric Energy)
+                            Description='The amount of energy charged'
+                            ).Create()
         if self.exists():
             try:
                 self._last_fuel = float(Devices[self._unit_index].sValue)
@@ -581,15 +576,14 @@ class ChargeRenaultSwitch(RenaultDomoticzDevice):
     def __init__(self) -> None:
         super().__init__(UNIT_SWITCH_INDEX)
 
-    def create(self, vehicle_status) -> None:
+    def create(self) -> None:
         """Check if the device is present in Domoticz, and otherwise create it."""
-        if vehicle_status:
-            if not self.exists():
-                Domoticz.Device(Name='ChargeWhenAtHome', Unit=self._unit_index,
-                                Type=244, Subtype=73, Switchtype=0, # Switch on/off
-                                Description="Toggle between Scheduled and Always charging in case at Home and Plugged in",
-                                Used=1
-                                ).Create()
+        if not self.exists():
+            Domoticz.Device(Name='ChargeWhenAtHome', Unit=self._unit_index,
+                            Type=244, Subtype=73, Switchtype=0, # Switch on/off
+                            Description="Toggle between Scheduled and Always charging in case at Home and Plugged in",
+                            Used=1
+                            ).Create()
 
     def onCommand(self, Command, Level, Color) -> Action: # return: which action to apply
         """Process a command for this device and update the device in Domoticz."""
@@ -614,15 +608,14 @@ class RefreshRenaultSwitch(RenaultDomoticzDevice):
     def __init__(self) -> None:
         super().__init__(UNIT_REFRESH_INDEX)
 
-    def create(self, vehicle_status) -> None:
+    def create(self) -> None:
         """Check if the device is present in Domoticz, and otherwise create it."""
-        if vehicle_status:
-            if not self.exists():
-                Domoticz.Device(Name='RefreshNow', Unit=self._unit_index,
-                                Type=244, Subtype=73, Switchtype=9, # PushOn
-                                Description="Refresh car readings now",
-                                Used=1
-                                ).Create()
+        if not self.exists():
+            Domoticz.Device(Name='RefreshNow', Unit=self._unit_index,
+                            Type=244, Subtype=73, Switchtype=9, # PushOn
+                            Description="Refresh car readings now",
+                            Used=1
+                            ).Create()
 
     def onCommand(self, Command, Level, Color) -> Action: # return: which action to apply
         """Process a command for this device and update the device in Domoticz."""
@@ -637,14 +630,13 @@ class ChargeRenaultStatus(RenaultDomoticzDevice):
     def __init__(self) -> None:
         super().__init__(UNIT_STATUS_INDEX)
 
-    def create(self, vehicle_status) -> None:
+    def create(self) -> None:
         """Check if the device is present in Domoticz, and otherwise create it."""
-        if vehicle_status:
-            if not self.exists():
-                Domoticz.Device(Name='chargingStatus', Unit=self._unit_index,
-                                Type=243, Subtype=22, # Alert
-                                Used=1
-                                ).Create()
+        if not self.exists():
+            Domoticz.Device(Name='chargingStatus', Unit=self._unit_index,
+                            Type=243, Subtype=22, # Alert
+                            Used=1
+                            ).Create()
 
     def update(self, vehicle_status) -> Action:
         """Determine the actual value of the instrument and update the device in Domoticz."""
@@ -718,11 +710,8 @@ class RenaultPlugin(ReducedHeartBeat, MyRenaultConnector):
 
     def create_devices(self) -> None:
         """Create the appropiate devices in Domoticz for the vehicle."""
-        vehicle_status = self.engage_vehicle(Action.NO_ACTION)
-        if vehicle_status:
-            for device in self._devices:
-                device.create(vehicle_status)
-                device.update(vehicle_status) # TODO: need to process next_action here too?
+        for device in self._devices:
+            device.create()
 
     def update_devices(self, action: Action = Action.NO_ACTION) -> None:
         """Retrieve the status of the vehicle and update the Domoticz devices."""
@@ -770,6 +759,7 @@ def onStart() -> None:
             Domoticz.Debug('onStart start')
             _plugin.add_devices()
             _plugin.create_devices()
+            _plugin.update_devices()
 
 def onStop() -> None:
     """Callback from Domoticz that the plugin is stopped."""

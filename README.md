@@ -25,6 +25,11 @@ uses https://github.com/hacf-fr/renault-api as set in requirements.txt
 
 ## history
 
+#### 0.2.4 split of onStart in create and calling update straight after
+- implies a possible action is applied at startup already
+- no need to duplicate code
+- no other changes
+
 #### 0.2.3 added RefreshNow button
 - added some more exception handling
 - also cleaned geopy since not in favor of address detection concept
