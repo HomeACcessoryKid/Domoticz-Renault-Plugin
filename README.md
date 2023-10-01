@@ -25,6 +25,10 @@ uses https://github.com/hacf-fr/renault-api as set in requirements.txt
 
 ## history
 
+#### 0.2.5 introduction of HVAC control
+- on captur, only switch-on works, switch-off is ignored
+- update refresh button states so log knows when it was used
+
 #### 0.2.4 split of onStart in create and calling update straight after
 - implies a possible action is applied at startup already
 - no need to duplicate code

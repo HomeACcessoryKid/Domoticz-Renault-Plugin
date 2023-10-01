@@ -8,10 +8,10 @@
 # Heavily inspired by https://github.com/joro75/Domoticz-Toyota-Plugin
 # Many thanks to John de Rooij!
 """
-<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.2.4"
+<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.2.5"
         externallink="https://github.com/HomeACcessoryKid/Domoticz-Renault-Plugin">
     <description>
-        <h2>Domoticz Renault Plugin 0.2.4</h2>
+        <h2>Domoticz Renault Plugin 0.2.5</h2>
         <ul style="list-style-type:none">
             <li>A Domoticz plugin that provides devices for a Renault car with connected services.</li>
             <li>It is using the same API that is used by the MyRenault connected service.</li>
@@ -27,8 +27,9 @@
             <li>Fuel level - Shows the current fuel level percentage</li>
             <li>Charge - Shows the charges made and the energy increase</li>
             <li>ChargingStatus - Shows plugState, chargingStatus and if Scheduled or Always charging</li>
-            <li>ChargeWhenAtHome - Toggle between Scheduled and Always charging, when at Home</li>
+            <li>ChargeNowWhenAtHome - Toggle between Scheduled and Always charging, when at Home</li>
             <li>Distance to Home - How far away is your car from home in a straight line.</li>
+            <li>Airco/Heater - start Airco/Heater (stop does not work on Captur, must start car for that!)</li>
             <li>RefreshNow - Update all sensors</li>
         </ul>
         <h3>Configuration</h3>
@@ -160,6 +161,7 @@ UNIT_SWITCH_INDEX:      int = 4
 UNIT_STATUS_INDEX:      int = 5
 UNIT_SEPARATION_INDEX:  int = 6
 UNIT_REFRESH_INDEX:     int = 7
+UNIT_AIRCO_INDEX:       int = 8
 
 class Action(Flag):
     NO_ACTION        = 0
@@ -295,26 +297,26 @@ class MyRenaultConnector():
                                     Domoticz.Status(await vehicle.set_charge_mode(action.api_cmd()))
                                     await asyncio.sleep(3)
                                     pending -= 1
-#                         if action in Action.AC_ON:
-#                             pending = 3
-#                             while pending:
-#                                 result = await vehicle.get_hvac_status()
-#                                 if result.hvacStatus == action.api_res():
-#                                     pending = 0
-#                                 else:
-#                                     Domoticz.Status(await vehicle.set_ac_start(20.0))
-#                                     await asyncio.sleep(3)
-#                                     pending -= 1
-#                         if action in Action.AC_OFF:
-#                             pending = 3
-#                             while pending:
-#                                 result = await vehicle.get_hvac_status()
-#                                 if result.hvacStatus == action.api_res():
-#                                     pending = 0
-#                                 else:
-#                                     Domoticz.Status(await vehicle.set_ac_stop())
-#                                     await asyncio.sleep(3)
-#                                     pending -= 1
+                        if action in Action.AC_ON:
+                            pending = 3
+                            while pending:
+                                result = await vehicle.get_hvac_status()
+                                if result.hvacStatus == action.api_res():
+                                    pending = 0
+                                else:
+                                    Domoticz.Status(await vehicle.set_ac_start(20.0)) # TODO: make temperature a parameter
+                                    await asyncio.sleep(3)
+                                    pending -= 1
+                        if action in Action.AC_OFF:
+                            pending = 3
+                            while pending:
+                                result = await vehicle.get_hvac_status()
+                                if result.hvacStatus == action.api_res():
+                                    pending = 0
+                                else:
+                                    Domoticz.Status(await vehicle.set_ac_stop())
+                                    await asyncio.sleep(3)
+                                    pending -= 1
                     vehicle_status = []
                     vehicle_status.append(await vehicle.get_cockpit())        #[0] fuelAutonomy fuelQuantity totalMileage
                     vehicle_status.append(await vehicle.get_charges(now,now)) #[1] charges of today
@@ -579,7 +581,7 @@ class ChargeRenaultSwitch(RenaultDomoticzDevice):
     def create(self) -> None:
         """Check if the device is present in Domoticz, and otherwise create it."""
         if not self.exists():
-            Domoticz.Device(Name='ChargeWhenAtHome', Unit=self._unit_index,
+            Domoticz.Device(Name='ChargeNowWhenAtHome', Unit=self._unit_index,
                             Type=244, Subtype=73, Switchtype=0, # Switch on/off
                             Description="Toggle between Scheduled and Always charging in case at Home and Plugged in",
                             Used=1
@@ -621,7 +623,43 @@ class RefreshRenaultSwitch(RenaultDomoticzDevice):
         """Process a command for this device and update the device in Domoticz."""
         if self.exists():
             if Command == "On":
+                Devices[self._unit_index].Update(nValue=1,sValue="")
+                Devices[self._unit_index].Update(nValue=0,sValue="")
                 return Action.NO_ACTION
+
+
+class AircoRenaultSwitch(RenaultDomoticzDevice):
+    """The Domoticz device that refreshes readings"""
+
+    def __init__(self) -> None:
+        super().__init__(UNIT_AIRCO_INDEX)
+
+    def create(self) -> None:
+        """Check if the device is present in Domoticz, and otherwise create it."""
+        if not self.exists():
+            Domoticz.Device(Name='Airco/Heater', Unit=self._unit_index,
+                            Type=244, Subtype=73, Switchtype=0, # Switch on/off
+                            Description="Switch the Airco/Heater on or off",
+                            Used=1
+                            ).Create()
+
+    def update(self, vehicle_status) -> Action:
+        """Determine the actual value of the instrument and update the device in Domoticz."""
+        if vehicle_status:
+            if self.exists():
+                if vehicle_status[5].hvacStatus == Action.AC_ON.api_res():
+                    Devices[self._unit_index].Update(nValue=1,sValue="")
+                else:
+                    Devices[self._unit_index].Update(nValue=0,sValue="")
+
+    def onCommand(self, Command, Level, Color) -> Action: # return: which action to apply
+        """Process a command for this device and update the device in Domoticz."""
+        if self.exists():
+            if Command == "On":
+                return Action.AC_ON
+            if Command == "Off":
+                return Action.AC_OFF
+            return Action.NO_ACTION
 
 
 class ChargeRenaultStatus(RenaultDomoticzDevice):
@@ -706,6 +744,7 @@ class RenaultPlugin(ReducedHeartBeat, MyRenaultConnector):
         self._devices += [ChargeRenaultDevice()]
         self._devices += [ChargeRenaultSwitch()]
         self._devices += [RefreshRenaultSwitch()]
+        self._devices += [AircoRenaultSwitch()]
         self._devices += [ChargeRenaultStatus()]
 
     def create_devices(self) -> None:
