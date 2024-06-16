@@ -25,6 +25,17 @@ uses https://github.com/hacf-fr/renault-api as set in requirements.txt
 
 ## history
 
+#### 0.2.8 fix of chargemode encoding
+- variable names of chargemode reading have changed
+- hvac encoding was reverted
+
+#### 0.2.7 encoding of HVAC control
+- when renault messed around with hvac encoding as int instead of str
+
+#### 0.2.6 better exception handling
+- handle bad login situation
+- reorder API calls for better view on debug output
+
 #### 0.2.5 introduction of HVAC control
 - on captur, only switch-on works, switch-off is ignored
 - update refresh button states so log knows when it was used

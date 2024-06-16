@@ -1,4 +1,4 @@
-# Copyright (C) 2023 HomeACcessoryKid
+# Copyright (C) 2023-2024 HomeACcessoryKid
 #
 # This software is licensed as described in the file LICENSE, which
 # you should have received as part of this distribution.
@@ -8,10 +8,10 @@
 # Heavily inspired by https://github.com/joro75/Domoticz-Toyota-Plugin
 # Many thanks to John de Rooij!
 """
-<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.2.5"
+<plugin key="Renault" name="Renault" author="HomeACcessoryKid" version="0.2.8"
         externallink="https://github.com/HomeACcessoryKid/Domoticz-Renault-Plugin">
     <description>
-        <h2>Domoticz Renault Plugin 0.2.5</h2>
+        <h2>Domoticz Renault Plugin 0.2.8</h2>
         <ul style="list-style-type:none">
             <li>A Domoticz plugin that provides devices for a Renault car with connected services.</li>
             <li>It is using the same API that is used by the MyRenault connected service.</li>
@@ -179,8 +179,8 @@ class Action(Flag):
         return cmd[self]
         
     def api_res(self):
-        res={ self.CHARGE_ALWAYS:   "always",
-              self.CHARGE_SCHEDULED:"scheduled",
+        res={ self.CHARGE_ALWAYS:   "always_charging",
+              self.CHARGE_SCHEDULED:"schedule_mode",
               self.AC_ON:           "on",
               self.AC_OFF:          "off"}
         return res[self]
@@ -319,11 +319,11 @@ class MyRenaultConnector():
                                     pending -= 1
                     vehicle_status = []
                     vehicle_status.append(await vehicle.get_cockpit())        #[0] fuelAutonomy fuelQuantity totalMileage
-                    vehicle_status.append(await vehicle.get_charges(now,now)) #[1] charges of today
-                    vehicle_status.append(await vehicle.get_charge_mode())    #[2] chargeMode
-                    vehicle_status.append(await vehicle.get_battery_status()) #[3] timestamp batteryLevel batteryAutonomy plugStatus chargingStatus
-                    vehicle_status.append(await vehicle.get_location())       #[4] timestamp gpsLongitude gpsLatitude lastUpdateTime gpsDirection
-                    vehicle_status.append(await vehicle.get_hvac_status())    #[5] hvacStatus socThreshold internalTemperature lastUpdateTime
+                    vehicle_status.append(await vehicle.get_charge_mode())    #[1] chargeMode
+                    vehicle_status.append(await vehicle.get_battery_status()) #[2] timestamp batteryLevel batteryAutonomy plugStatus chargingStatus
+                    vehicle_status.append(await vehicle.get_location())       #[3] timestamp gpsLongitude gpsLatitude lastUpdateTime gpsDirection
+                    vehicle_status.append(await vehicle.get_hvac_status())    #[4] hvacStatus socThreshold internalTemperature lastUpdateTime
+                    vehicle_status.append(await vehicle.get_charges(now,now)) #[5] charges of today
 #                     vehicle_status.append(await vehicle.get_details())
 #                     vehicle_status.append(await vehicle.get_charging_settings())
 #                     vehicle_status.append(await vehicle.get_hvac_settings())
@@ -355,8 +355,16 @@ class MyRenaultConnector():
         if not self._logged_on:
             asyncio.run(self._connect_to_myr())
         if self._logged_on:
-            Domoticz.Log('Engaging Vehicle')
-            vehicle_status = asyncio.run(self._engage_vehicle(action))
+            try:
+                if not self._car.vehicleDetails.vin is None:
+                    Domoticz.Log('Engaging Vehicle')
+                    vehicle_status = asyncio.run(self._engage_vehicle(action))
+                else:
+                    Domoticz.Error('Lost login with no VIN')
+                    self._logged_on = False
+            except AttributeError as ex:
+                Domoticz.Error(f'Lost login: {ex}')
+                self._logged_on = False
         if vehicle_status is None:
             Domoticz.Error('Vehicle status could not be retrieved')
         else:
@@ -443,8 +451,8 @@ class SeparationRenaultDevice(RenaultDomoticzDevice):
         """Determine the actual value of the instrument and update the device in Domoticz."""
         if vehicle_status:
             if self.exists():
-                kmetersv=self._degreev*(float(self._home[0])-vehicle_status[4].gpsLatitude)
-                kmetersh=self._degreeh*(float(self._home[1])-vehicle_status[4].gpsLongitude)
+                kmetersv=self._degreev*(float(self._home[0])-vehicle_status[3].gpsLatitude)
+                kmetersh=self._degreeh*(float(self._home[1])-vehicle_status[3].gpsLongitude)
                 dist=round(math.sqrt(kmetersv*kmetersv+kmetersh*kmetersh),3)
                 Devices[self._unit_index].Update(nValue=0, sValue=f'{dist}')
 
@@ -547,7 +555,7 @@ class ChargeRenaultDevice(RenaultDomoticzDevice):
         if vehicle_status: # TODO: make a at home and elsewhere counter...
             if self.exists():
                 old_csd_date=''
-                raw_data=vehicle_status[1].raw_data
+                raw_data=vehicle_status[5].raw_data
                 now = datetime.datetime.now()
                 sValn='-1;0;' + now.strftime('%Y-%m-%d') + ' 00:00:00'
                 Devices[self._unit_index].Update(nValue=0,sValue=sValn)  # register a zero point at 00:00
@@ -647,7 +655,7 @@ class AircoRenaultSwitch(RenaultDomoticzDevice):
         """Determine the actual value of the instrument and update the device in Domoticz."""
         if vehicle_status:
             if self.exists():
-                if vehicle_status[5].hvacStatus == Action.AC_ON.api_res():
+                if vehicle_status[4].hvacStatus == Action.AC_ON.api_res():
                     Devices[self._unit_index].Update(nValue=1,sValue="")
                 else:
                     Devices[self._unit_index].Update(nValue=0,sValue="")
@@ -695,9 +703,9 @@ class ChargeRenaultStatus(RenaultDomoticzDevice):
                }
         if vehicle_status:
             if self.exists():
-                chargeMode = vehicle_status[2].chargeMode
-                plugstatus=vehicle_status[3].plugStatus
-                state = vehicle_status[3].chargingStatus
+                chargeMode = vehicle_status[1].chargeMode
+                plugstatus=vehicle_status[2].plugStatus
+                state = vehicle_status[2].chargingStatus
                 text = chargeMode
                 text+=plugs[plugstatus]
                 if state in states:
